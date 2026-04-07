@@ -6,7 +6,7 @@ MindFlow Telegram Bot – multi-žingsnis
 3. Struktūra – parenka formą
 4. Rezultatas – paruoštas dokumentas
 """
-
+import os
 import json
 import logging
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
@@ -17,8 +17,8 @@ from telegram.ext import (
 import anthropic
 
 # === NUSTATYMAI ===
-TELEGRAM_TOKEN = "8783209011:AAEZnxEkW0ndy2nnhxY3QzFci7fkh-HzDHQ"
-ANTHROPIC_API_KEY = "ĮDĖK_NAUJĄ_ANTHROPIC_RAKTĄ"
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
