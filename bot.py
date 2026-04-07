@@ -1,14 +1,7 @@
 #!/usr/bin/env python3
 """
-MindFlow Telegram Bot
-Mintys → Medžiaga
-
-Reikalavimai:
-  pip install python-telegram-bot anthropic
-
-Railway environment variables:
-  TELEGRAM_TOKEN
-  ANTHROPIC_API_KEY
+SlowSpace Telegram Bot - Multi-step version
+Mintys → Klausimai → Rezultatas
 """
 
 import os
@@ -16,27 +9,41 @@ import json
 import logging
 from telegram import Update
 from telegram.ext import Application, MessageHandler, CommandHandler, filters, ContextTypes
+
 import anthropic
 
-# === NUSTATYMAI (iš environment variables) ===
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 
-# === LOGGING ===
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# === ANTHROPIC ===
 client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
-SYSTEM_PROMPT = """Tu esi kūrybinio mąstymo partneris. Vartotojas duoda nestruktūruotą mintį lietuvių kalba.
+# Saugome pokalbio būseną kiekvienam vartotojui
+user_state = {}
 
-Atsakyk TIKTAI JSON formatu be jokio papildomo teksto:
+CLARIFY_PROMPT = """Tu esi kūrybinio mąstymo partneris. Vartotojas dalijasi mintimi lietuvių kalba.
+
+Tavo užduotis: užduoti VIENĄ tikslinantį klausimą kad geriau suprastum ko reikia.
+
+Klausk apie:
+- Kokiam tikslui tai skirta?
+- Kas yra auditorija?
+- Koks formatas reikalingas?
+
+Atsakyk tik vienu trumpu klausimu lietuviškai. Be jokių įžangų."""
+
+RESULT_PROMPT = """Tu esi kūrybinio mąstymo partneris. Vartotojas davė mintį ir atsakė į tikslinantį klausimą.
+
+Paversk tai į struktūruotą rezultatą lietuviškai.
+
+Atsakyk TIKTAI JSON formatu:
 {
   "type": "idea|plan|insight|stress|question",
-  "title": "trumpas pavadinimas iki 6 žodžių lietuviškai",
+  "title": "trumpas pavadinimas iki 6 žodžių",
   "summary": "vienas sakinys kas tai yra",
-  "structured": "struktūruota forma - žingsniai arba pastabos, kiekvienas elementas naujoje eilutėje su brūkšneliu",
+  "structured": "struktūruota forma - žingsniai arba pastabos, kiekvienas su brūkšneliu naujoje eilutėje",
   "next": "vienas konkretus kitas žingsnis"
 }"""
 
@@ -67,33 +74,59 @@ def format_result(result: dict, raw: str) -> str:
     return "\n".join(lines)
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    raw = update.message.text.strip()
-    if not raw:
+    user_id = update.effective_user.id
+    text = update.message.text.strip()
+    if not text:
         return
-    await update.message.reply_text("⏳ Apdorojama...")
-    try:
-        response = client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=1000,
-            system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": raw}],
-        )
-        text = response.content[0].text
-        clean = text.replace("```json", "").replace("```", "").strip()
-        result = json.loads(clean)
-        reply = format_result(result, raw)
-        await update.message.reply_text(reply, parse_mode="Markdown")
-    except json.JSONDecodeError:
-        await update.message.reply_text(f"⚠️ Nepavyko apdoroti. Bandyk dar kartą.")
-    except Exception as e:
-        logger.error(f"Klaida: {e}")
-        await update.message.reply_text(f"⚠️ Klaida: {str(e)}")
+
+    state = user_state.get(user_id, {"step": "initial"})
+
+    if state["step"] == "initial":
+        # Pirma mintis – klausiame tikslinančio klausimo
+        await update.message.reply_text("⏳ Apdorojama...")
+        try:
+            response = client.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=300,
+                system=CLARIFY_PROMPT,
+                messages=[{"role": "user", "content": text}],
+            )
+            question = response.content[0].text.strip()
+            user_state[user_id] = {"step": "clarify", "raw": text}
+            await update.message.reply_text(question)
+        except Exception as e:
+            await update.message.reply_text(f"⚠️ Klaida: {str(e)}")
+
+    elif state["step"] == "clarify":
+        # Atsakymas į klausimą – generuojame rezultatą
+        raw = state["raw"]
+        await update.message.reply_text("⏳ Kuriu rezultatą...")
+        try:
+            response = client.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=1000,
+                system=RESULT_PROMPT,
+                messages=[
+                    {"role": "user", "content": f"Mintis: {raw}\nAtsakymas: {text}"}
+                ],
+            )
+            result_text = response.content[0].text
+            clean = result_text.replace("```json", "").replace("```", "").strip()
+            result = json.loads(clean)
+            reply = format_result(result, raw)
+            await update.message.reply_text(reply, parse_mode="Markdown")
+        except Exception as e:
+            await update.message.reply_text(f"⚠️ Klaida: {str(e)}")
+        finally:
+            user_state[user_id] = {"step": "initial"}
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    user_state[user_id] = {"step": "initial"}
     await update.message.reply_text(
         "👋 Sveika! Aš *SlowSpace* botas.\n\n"
-        "Išpilk kas galvoje – aš paversiu į struktūruotą formą.\n\n"
-        "Tiesiog rašyk laisvai lietuviškai 👇",
+        "Išpilk kas galvoje – aš paklausiu vieno klausimo ir paversiu į struktūruotą formą.\n\n"
+        "Rašyk laisvai lietuviškai 👇",
         parse_mode="Markdown"
     )
 
