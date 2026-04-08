@@ -105,7 +105,6 @@ TYPE_ICONS = {
 }
 
 def escape_md(text):
-    """Escape special chars for MarkdownV2"""
     chars = r'_[]()~`>#+=|{}.!'
     for c in chars:
         text = text.replace(c, f'\\{c}')
@@ -240,7 +239,6 @@ async def receive_expand(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return WAITING_THOUGHT
 
-    # Nori plėsti
     result = context.user_data.get("result", "")
     combined = context.user_data.get("combined", "")
 
@@ -289,7 +287,6 @@ def main():
 
     app.add_handler(conv)
     logger.info("MindFlow botas paleistas...")
-    app.run_polling()
+    app.run_polling(drop_pending_updates=True)
 
-if __name__ == "__main__":
-    main()
+main()
